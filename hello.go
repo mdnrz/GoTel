@@ -16,23 +16,19 @@ const (
 	msgQuit
 )
 
-type Packet struct {
-	Type msgType
-	Conn net.Conn
-	Text string
-}
-
 type Client struct {
-	userName string
-	strike   int
-	banned   bool
-	bannedAt time.Time
-	conn     net.Conn
+	UserName string
+	Request msgType
+	Strike   int
+	Banned   bool
+	BannedAt time.Time
+	Conn     net.Conn
+	Text string
 }
 
 const Port = "6969"
 
-func client(conn net.Conn, packet_q chan Packet) {
+func client(conn net.Conn, Client_q chan Client) {
 	loginPrompt := "Who are you?\n> "
 	_, err := conn.Write([]byte(loginPrompt))
 	if err != nil {
@@ -47,41 +43,40 @@ func client(conn net.Conn, packet_q chan Packet) {
 			conn.Close()
 			return
 		}
-		packet_q <- Packet{
-			Type: msgText,
+		Client_q <- Client {
+			Request: msgText,
 			Conn: conn,
 			Text: string(readBuf[:n]),
 		}
 	}
 }
 
-func login(packet_q chan Packet) {
-}
-
-func server(packet_q chan Packet) {
-	clientsOnline := []net.Conn{}
-	clientsOffline := []net.Conn{}
+func server(Client_q chan Client) {
+	clientsOnline := []Client{}
+	clientsOffline := []Client{}
 	for {
-		packet := <-packet_q
-		switch packet.Type {
+		client := <-Client_q
+		switch client.Request {
 		case msgConnect:
-			log.Printf("Got login request from %s\n", packet.Conn.RemoteAddr().String());
-			clientsOffline = append(clientsOffline, packet.Conn)
+			log.Printf("Got login request from %s\n", client.Conn.RemoteAddr().String());
+			clientsOffline = append(clientsOffline, client)
 		case msgText:
+			// TODO: This loop can be avoided by adding a `loggedIn` boolean to client
 			for index, clientOffline := range clientsOffline {
-				if clientOffline == packet.Conn {
-					log.Printf("logging in clinet %s\n", packet.Conn.RemoteAddr().String());
-					clientsOnline = append(clientsOnline, packet.Conn);
+				if clientOffline.Conn == client.Conn {
+					clientOffline.UserName = client.Text;
+					log.Printf("logging in %s\n", clientOffline.UserName);
+					clientsOnline = append(clientsOnline, clientOffline);
 					clientsOffline = slices.Delete(clientsOffline, index, index+1);
 				}
 			}
-			for _, clientOnline := range clientsOnline {
-				if clientOnline == packet.Conn {
+			for index, clientOnline := range clientsOnline {
+				if clientOnline.Conn == client.Conn {
 					continue
 				}
-				_, err := clientOnline.Write([]byte(packet.Text))
+				_, err := clientOnline.Conn.Write([]byte(clientOnline.UserName + ": " + client.Text))
 				if err != nil {
-					log.Printf("Could not send message to client %s\n", clientOnline.RemoteAddr().String())
+					log.Printf("Could not send message to client %s\n", clientOnline.UserName)
 				}
 			}
 		}
@@ -93,8 +88,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Could not listen to port %s: %s\n", Port, err)
 	}
-	packet_q := make(chan Packet)
-	go server(packet_q)
+	Client_q := make(chan Client)
+	go server(Client_q)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -102,10 +97,10 @@ func main() {
 			continue
 		}
 		log.Printf("Accepted connection from %s", conn.RemoteAddr())
-		packet_q <- Packet{
-			Type: msgConnect,
+		Client_q <- Client {
+			Request: msgConnect,
 			Conn: conn,
 		}
-		go client(conn, packet_q)
+		go client(conn, Client_q)
 	}
 }
