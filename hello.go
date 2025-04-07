@@ -4,7 +4,7 @@ import (
 	"log"
 	"net"
 	"time"
-	"slices"
+	"strings"
 )
 
 type msgType int
@@ -52,31 +52,37 @@ func client(conn net.Conn, Client_q chan Client) {
 }
 
 func server(Client_q chan Client) {
-	clientsOnline := []Client{}
-	clientsOffline := []Client{}
+	clientsOnline := make(map[string]Client)
+	clientsOffline := make(map[string]Client)
 	for {
 		client := <-Client_q
+		keyString := client.Conn.RemoteAddr().String();
 		switch client.Request {
 		case msgConnect:
-			log.Printf("Got login request from %s\n", client.Conn.RemoteAddr().String());
-			clientsOffline = append(clientsOffline, client)
+			log.Printf("Got login request from %s\n", keyString);
+			clientsOffline[keyString] = client;
 		case msgText:
-			// TODO: This loop can be avoided by adding a `loggedIn` boolean to client
-			for index, clientOffline := range clientsOffline {
-				if clientOffline.Conn == client.Conn {
-					clientOffline.UserName = client.Text;
-					log.Printf("logging in %s\n", clientOffline.UserName);
-					clientsOnline = append(clientsOnline, clientOffline);
-					clientsOffline = slices.Delete(clientsOffline, index, index+1);
+			clientOffline, ok := clientsOffline[keyString];
+			if ok {
+				clientOffline.UserName = strings.TrimRight(client.Text, "\r\n");
+				log.Printf("logging in %s\n", clientOffline.UserName);
+				clientsOnline[keyString] = clientOffline;
+				delete(clientsOffline, keyString);
+				_, err := clientsOnline[keyString].Conn.Write([]byte("Welcome " + clientsOnline[keyString].UserName + "\n\n"));
+				if err != nil {
+					log.Printf("Could not send message to client %s\n", clientsOnline[keyString].UserName)
 				}
+				break;
 			}
-			for index, clientOnline := range clientsOnline {
-				if clientOnline.Conn == client.Conn {
+			author, _ := clientsOnline[keyString];
+			author.Text = client.Text;
+			for _, value := range clientsOnline {
+				if value.Conn == author.Conn {
 					continue
 				}
-				_, err := clientOnline.Conn.Write([]byte(clientOnline.UserName + ": " + client.Text))
+				_, err := value.Conn.Write([]byte(author.UserName + ": " + author.Text))
 				if err != nil {
-					log.Printf("Could not send message to client %s\n", clientOnline.UserName)
+					log.Printf("Could not send message to client %s\n", value.UserName)
 				}
 			}
 		}
