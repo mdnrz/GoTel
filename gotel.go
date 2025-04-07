@@ -28,7 +28,7 @@ type Client struct {
 
 const Port = "6969"
 
-func client(conn net.Conn, Client_q chan Client) {
+func addClient(conn net.Conn, Client_q chan Client) {
 	loginPrompt := "Who are you?\n> "
 	_, err := conn.Write([]byte(loginPrompt))
 	if err != nil {
@@ -107,6 +107,6 @@ func main() {
 			Request: msgConnect,
 			Conn: conn,
 		}
-		go client(conn, Client_q)
+		go addClient(conn, Client_q)
 	}
 }
