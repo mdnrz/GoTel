@@ -5,6 +5,7 @@ import (
 	"net"
 	"time"
 	"strings"
+	"fmt"
 )
 
 type msgType int
@@ -18,15 +19,21 @@ const (
 
 type Client struct {
 	UserName string
+	LastMsgTime time.Time
 	Request msgType
-	Strike   int
+	Strike int
 	Banned   bool
-	BannedAt time.Time
+	BanEnd time.Time
 	Conn     net.Conn
 	Text string
 }
 
-const Port = "6969"
+const (
+	msgCoolDownTimeSec = 1
+	banLimit = 5
+	banTimeoutSec = 180
+	Port = "6969"
+)
 
 func addClient(conn net.Conn, Client_q chan Client) {
 	loginPrompt := "Who are you?\n> "
@@ -51,6 +58,30 @@ func addClient(conn net.Conn, Client_q chan Client) {
 	}
 }
 
+func canMessage(client *Client) bool {
+	if !client.Banned {
+		diff := time.Now().Sub(client.LastMsgTime).Seconds();
+		if diff <= msgCoolDownTimeSec {
+			client.Strike += 1;
+			if client.Strike >= banLimit {
+				client.Banned = true;
+				client.BanEnd = time.Now().Add(banTimeoutSec * time.Second)
+			}
+			return false;
+		}
+		return true
+	}
+	banTimeRemaining := client.BanEnd.Sub(time.Now()).Seconds();
+	if  banTimeRemaining >= 0.0 {
+		banTimeRemainingStr := fmt.Sprintf("You're banned. Try again in %.0f seconds.\n", banTimeRemaining)
+		client.Conn.Write([]byte(banTimeRemainingStr));
+		return false;
+	} 
+	client.Strike = 0;
+	client.Banned = false;
+	return true;
+}
+
 func checkForDuplicateUN(needle string, heystack map[string]Client) bool {
 	for _, client := range heystack {
 		if client.UserName == needle { return true }
@@ -66,12 +97,19 @@ func server(Client_q chan Client) {
 		keyString := client.Conn.RemoteAddr().String();
 		switch client.Request {
 		case msgConnect:
+			// TODO: implement rate limit for connection requests
 			log.Printf("Got login request from %s\n", keyString);
 			clientsOffline[keyString] = client;
 		case msgText:
 			clientOffline, ok := clientsOffline[keyString];
 			if ok {
+				if !canMessage(&clientOffline) {
+					clientsOffline[keyString] = clientOffline
+					break;
+				}
 				clientOffline.UserName = strings.TrimRight(client.Text, "\r\n");
+				clientOffline.LastMsgTime = time.Now();
+				clientsOffline[keyString] = clientOffline
 				if checkForDuplicateUN(clientOffline.UserName, clientsOnline) {
 					_, err := clientsOffline[keyString].Conn.Write([]byte("UserName already exists; Try something else\n> "));
 					if err != nil {
@@ -88,8 +126,18 @@ func server(Client_q chan Client) {
 				}
 				break;
 			}
-			author, _ := clientsOnline[keyString];
+
+			author, ok := clientsOnline[keyString];
+			if !ok {
+				log.Fatal("cannot find client\n");
+			}
+			if !canMessage(&author) {
+				clientsOnline[keyString] = author
+				break;
+			}
+			author.LastMsgTime = time.Now()
 			author.Text = client.Text;
+			clientsOnline[keyString] = author
 			for _, value := range clientsOnline {
 				if value.Conn == author.Conn {
 					continue
