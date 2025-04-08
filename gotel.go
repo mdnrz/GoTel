@@ -45,15 +45,24 @@ func addClient(conn net.Conn, Client_q chan Client) {
 	readBuf := make([]byte, 512)
 	for {
 		n, err := conn.Read(readBuf)
+		if n == 0 {
+			Client_q <- Client {
+				Request: msgQuit,
+				Conn: conn,
+			}
+			return;
+		}
+		if n > 0 {
+			Client_q <- Client {
+				Request: msgText,
+				Conn: conn,
+				Text: string(readBuf[:n]),
+			}
+		}
 		if err != nil {
 			log.Printf("Could not read message from client %s: %s\n", conn.RemoteAddr().String(), err)
 			conn.Close()
 			return
-		}
-		Client_q <- Client {
-			Request: msgText,
-			Conn: conn,
-			Text: string(readBuf[:n]),
 		}
 	}
 }
@@ -100,6 +109,13 @@ func server(Client_q chan Client) {
 			// TODO: implement rate limit for connection requests
 			log.Printf("Got login request from %s\n", keyString);
 			clientsOffline[keyString] = client;
+		case msgQuit:
+			author, ok := clientsOnline[keyString]
+			if ok {
+				log.Printf("%s logged out.\n", author.UserName);
+				author.Conn.Close();
+				delete(clientsOnline, keyString);
+			}
 		case msgText:
 			clientOffline, ok := clientsOffline[keyString];
 			if ok {
