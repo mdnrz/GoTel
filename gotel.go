@@ -51,6 +51,13 @@ func addClient(conn net.Conn, Client_q chan Client) {
 	}
 }
 
+func checkForDuplicateUN(needle string, heystack map[string]Client) bool {
+	for _, client := range heystack {
+		if client.UserName == needle { return true }
+	}
+	return false;
+}
+
 func server(Client_q chan Client) {
 	clientsOnline := make(map[string]Client)
 	clientsOffline := make(map[string]Client)
@@ -65,6 +72,13 @@ func server(Client_q chan Client) {
 			clientOffline, ok := clientsOffline[keyString];
 			if ok {
 				clientOffline.UserName = strings.TrimRight(client.Text, "\r\n");
+				if checkForDuplicateUN(clientOffline.UserName, clientsOnline) {
+					_, err := clientsOffline[keyString].Conn.Write([]byte("UserName already exists; Try something else\n> "));
+					if err != nil {
+						log.Printf("Could not send message to client %s\n", keyString)
+					}
+					break;
+				}
 				log.Printf("logging in %s\n", clientOffline.UserName);
 				clientsOnline[keyString] = clientOffline;
 				delete(clientsOffline, keyString);
