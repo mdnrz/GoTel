@@ -8,6 +8,8 @@ import (
 	"fmt"
 )
 
+var commands [3]string = [3]string{"/help", "/login", "/quit"};
+
 type msgType int
 
 const (
@@ -36,12 +38,12 @@ const (
 )
 
 func addClient(conn net.Conn, Client_q chan Client) {
-	loginPrompt := "Who are you?\n> "
-	_, err := conn.Write([]byte(loginPrompt))
-	if err != nil {
-		log.Printf("[ERROR] Could not send login prompt to user %s: %s\n",
-			conn.RemoteAddr().String(), err)
-	}
+	// loginPrompt := "Who are you?\n> "
+	// _, err := conn.Write([]byte(loginPrompt))
+	// if err != nil {
+	// 	log.Printf("[ERROR] Could not send login prompt to user %s: %s\n",
+	// 		conn.RemoteAddr().String(), err)
+	// }
 	readBuf := make([]byte, 512)
 	for {
 		n, err := conn.Read(readBuf)
@@ -127,7 +129,7 @@ func server(Client_q chan Client) {
 				clientOffline.LastMsgTime = time.Now();
 				clientsOffline[keyString] = clientOffline
 				if checkForDuplicateUN(clientOffline.UserName, clientsOnline) {
-					_, err := clientsOffline[keyString].Conn.Write([]byte("UserName already exists; Try something else\n> "));
+					_, err := clientsOffline[keyString].Conn.Write([]byte("UserName already exists; Try something else."));
 					if err != nil {
 						log.Printf("Could not send message to client %s\n", keyString)
 					}
@@ -136,7 +138,7 @@ func server(Client_q chan Client) {
 				log.Printf("logging in %s\n", clientOffline.UserName);
 				clientsOnline[keyString] = clientOffline;
 				delete(clientsOffline, keyString);
-				_, err := clientsOnline[keyString].Conn.Write([]byte("Welcome " + clientsOnline[keyString].UserName + "\n\n"));
+				_, err := clientsOnline[keyString].Conn.Write([]byte("Welcome " + clientsOnline[keyString].UserName + "\n"));
 				if err != nil {
 					log.Printf("Could not send message to client %s\n", clientsOnline[keyString].UserName)
 				}
@@ -155,9 +157,9 @@ func server(Client_q chan Client) {
 			author.Text = client.Text;
 			clientsOnline[keyString] = author
 			for _, value := range clientsOnline {
-				if value.Conn == author.Conn {
-					continue
-				}
+				// if value.Conn == author.Conn {
+				// 	continue
+				// }
 				_, err := value.Conn.Write([]byte(author.UserName + ": " + author.Text))
 				if err != nil {
 					log.Printf("Could not send message to client %s\n", value.UserName)
