@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"math/big"
+	"crypto/rand"
 	"log"
 	"net"
 	"time"
@@ -169,7 +172,31 @@ func server(Client_q chan Client) {
 	}
 }
 
+func genToken() {
+	max := big.NewInt(0xF)
+	var randInt *big.Int
+	var err error
+	var tokenStr string
+	for range [32]int{} {
+		randInt, err = rand.Int(rand.Reader, max)
+		if err != nil {
+			log.Fatalf("Could not generate random number: %s\n", err)
+		}
+		tokenStr = fmt.Sprintf(tokenStr + "%X", randInt)
+	}
+	tokenFile, err := os.Create("TOKEN")
+	if err != nil {
+		log.Fatalf("Could not create token file: %s\n", err)
+	}
+	_, err = tokenFile.WriteString(tokenStr)
+	if err != nil {
+		log.Fatalf("Could not write token file: %s\n", err)
+	}
+}
+
 func main() {
+	genToken()
+	return;
 	ln, err := net.Listen("tcp", ":"+Port)
 	if err != nil {
 		log.Fatalf("Could not listen to port %s: %s\n", Port, err)
