@@ -24,10 +24,6 @@ var serverConn net.Conn
 const serverAddr = "127.0.0.1:6969"
 const initMsg =
 `This is a client for connecting to GoTel chat server.
-You can use the following command to use this:
-/help : Print the help menu
-/login <UserName> : Login to the server
-/quit : Logout from the server
 =======================================================`
 
 func main() {
@@ -116,10 +112,10 @@ func initCommands() {
 		},
 
 		Command {
-			Name: "login",
-			Description: "Login to server",
-			Signature: "/login <UserNmae>",
-			Function: sendLogin,
+			Name: "join",
+			Description: "Join the chat",
+			Signature: "/join <Token>",
+			Function: sendJoin,
 		},
 
 		Command {
@@ -138,7 +134,7 @@ func printHelp(v *gocui.View, input string) error {
 	return nil
 }
 
-func sendLogin(v *gocui.View, input string) error {
+func sendJoin(v *gocui.View, input string) error {
 	serverConn, _ = net.Dial("tcp", serverAddr);
 	// if err != nil {
 	// 	return err

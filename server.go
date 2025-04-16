@@ -14,7 +14,6 @@ import (
 var commands [3]string = [3]string{"/help", "/login", "/quit"};
 
 type msgType int
-
 const (
 	msgConnect msgType = iota + 1
 	msgLogin
@@ -22,8 +21,18 @@ const (
 	msgQuit
 )
 
+type loginStage int
+const (
+	verification loginStage = iota + 1
+	username
+	password
+)
+
+
 type Client struct {
+	Stage loginStage
 	UserName string
+	Password string
 	LastMsgTime time.Time
 	Request msgType
 	Strike int
@@ -103,6 +112,22 @@ func checkForDuplicateUN(needle string, heystack map[string]Client) bool {
 	return false;
 }
 
+func verifyToken(input string) bool {
+	tokenBytes := make([]byte, 32)
+	tokenFile, err := os.Open("TOKEN")
+	if err != nil {
+		log.Fatalf("Could not open TOKEN file for authentication: %s\n", err)
+	}
+	n, err := tokenFile.Read(tokenBytes)
+	if err != nil {
+		log.Fatalf("Could not read TOKEN file: %s\n", err)
+	}
+	if n < 32 {
+		log.Fatalf("TOKEN file is not valid.\n")
+	}
+	return input == string(tokenBytes)
+}
+
 func server(Client_q chan Client) {
 	clientsOnline := make(map[string]Client)
 	clientsOffline := make(map[string]Client)
@@ -112,7 +137,7 @@ func server(Client_q chan Client) {
 		switch client.Request {
 		case msgConnect:
 			// TODO: implement rate limit for connection requests
-			log.Printf("Got login request from %s\n", keyString);
+			log.Printf("Got join request from %s\n", keyString);
 			clientsOffline[keyString] = client;
 		case msgQuit:
 			author, ok := clientsOnline[keyString]
@@ -122,30 +147,56 @@ func server(Client_q chan Client) {
 				delete(clientsOnline, keyString);
 			}
 		case msgText:
-			clientOffline, ok := clientsOffline[keyString];
+			clientOffline, ok := clientsOffline[keyString]
 			if ok {
 				if !canMessage(&clientOffline) {
-					clientsOffline[keyString] = clientOffline
-					break;
+					clientsOffline[keyString] = clientOffline // update the timings
+					break
 				}
-				clientOffline.UserName = strings.TrimRight(client.Text, "\r\n");
-				clientOffline.LastMsgTime = time.Now();
-				clientsOffline[keyString] = clientOffline
-				if checkForDuplicateUN(clientOffline.UserName, clientsOnline) {
-					_, err := clientsOffline[keyString].Conn.Write([]byte("UserName already exists; Try something else."));
-					if err != nil {
-						log.Printf("Could not send message to client %s\n", keyString)
+				switch clientOffline.Stage {
+				case verification:
+					if !verifyToken(strings.TrimRight(client.Text, "\r\n")) {
+						_, err := clientOffline.Conn.Write([]byte("Invalid token.\n"));
+						if err != nil {
+							log.Printf("Could not send invalid token message to client %s\n", clientOffline.Conn.RemoteAddr().String())
+						}
+						clientOffline.LastMsgTime = time.Now()
+						clientsOffline[keyString] = clientOffline
+						break;
 					}
-					break;
+					_, err := clientOffline.Conn.Write([]byte("Token verified successfully!\nEnter your user name"));
+					if err != nil {
+						log.Printf("Could not send verification message to %s\n", clientOffline.Conn.RemoteAddr().String())
+					}
+					clientOffline.Stage = username
+					clientOffline.LastMsgTime = time.Now()
+					clientsOffline[keyString] = clientOffline
+					break
+				case username:
+					clientOffline.UserName = strings.TrimRight(client.Text, "\r\n");
+					clientOffline.LastMsgTime = time.Now()
+					clientsOffline[keyString] = clientOffline
+					_, err := clientOffline.Conn.Write([]byte("Enter your password:\n"));
+					if err != nil {
+						log.Printf("Could not send passowrd message to %s\n", clientOffline.Conn.RemoteAddr().String())
+					}
+					clientOffline.Stage = password
+					clientsOffline[keyString] = clientOffline
+					break
+				case password:
+					clientOffline.Password = strings.TrimRight(client.Text, "\r\n");
+					clientOffline.LastMsgTime = time.Now()
+					clientsOffline[keyString] = clientOffline
+					_, err := clientOffline.Conn.Write([]byte("Welcome " + clientOffline.UserName + "\n"));
+					if err != nil {
+						log.Printf("Could not send welcome message to %s\n", clientOffline.Conn.RemoteAddr().String())
+					}
+					clientOffline.LastMsgTime = time.Now()
+					clientsOnline[keyString] = clientOffline
+					delete(clientsOffline, keyString)
+					break
 				}
-				log.Printf("logging in %s\n", clientOffline.UserName);
-				clientsOnline[keyString] = clientOffline;
-				delete(clientsOffline, keyString);
-				_, err := clientsOnline[keyString].Conn.Write([]byte("Welcome " + clientsOnline[keyString].UserName + "\n"));
-				if err != nil {
-					log.Printf("Could not send message to client %s\n", clientsOnline[keyString].UserName)
-				}
-				break;
+				break
 			}
 
 			author, ok := clientsOnline[keyString];
@@ -153,7 +204,7 @@ func server(Client_q chan Client) {
 				log.Fatal("cannot find client\n");
 			}
 			if !canMessage(&author) {
-				clientsOnline[keyString] = author
+				clientsOnline[keyString] = author // update the timings
 				break;
 			}
 			author.LastMsgTime = time.Now()
@@ -196,7 +247,6 @@ func genToken() {
 
 func main() {
 	genToken()
-	return;
 	ln, err := net.Listen("tcp", ":"+Port)
 	if err != nil {
 		log.Fatalf("Could not listen to port %s: %s\n", Port, err)
@@ -213,6 +263,7 @@ func main() {
 		Client_q <- Client {
 			Request: msgConnect,
 			Conn: conn,
+			Stage: verification,
 		}
 		go addClient(conn, Client_q)
 	}
