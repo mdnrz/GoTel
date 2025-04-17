@@ -1,1 +1,5 @@
-gotel
+server
+client
+go.sum
+tags
+TOKEN

@@ -128,9 +128,47 @@ func verifyToken(input string) bool {
 	return input == string(tokenBytes)
 }
 
+func login(client *Client, msg string) bool {
+	if client.Stage == verification {
+		if !verifyToken(strings.TrimRight(msg, "\r\n")) {
+			_, err := client.Conn.Write([]byte("Invalid token.\n"));
+			if err != nil {
+				log.Printf("Could not send invalid token message to client %s\n", client.Conn.RemoteAddr().String())
+			}
+			client.LastMsgTime = time.Now()
+			return false;
+		}
+		_, err := client.Conn.Write([]byte("Token verified successfully!\nEnter your user name"));
+		if err != nil {
+			log.Printf("Could not send verification message to %s\n", client.Conn.RemoteAddr().String())
+		}
+		client.Stage = username
+		client.LastMsgTime = time.Now()
+		return false
+	}
+	if client.Stage == username {
+		client.UserName = strings.TrimRight(msg, "\r\n");
+		client.LastMsgTime = time.Now()
+		_, err := client.Conn.Write([]byte("Enter your password:\n"));
+		if err != nil {
+			log.Printf("Could not send passowrd message to %s\n", client.Conn.RemoteAddr().String())
+		}
+		client.Stage = password
+		return false
+	}
+	client.Password = strings.TrimRight(msg, "\r\n");
+	client.LastMsgTime = time.Now()
+	_, err := client.Conn.Write([]byte("Welcome " + client.UserName + "\n"));
+	if err != nil {
+		log.Printf("Could not send welcome message to %s\n", client.Conn.RemoteAddr().String())
+	}
+	client.LastMsgTime = time.Now()
+	return true
+}
+
 func server(Client_q chan Client) {
-	clientsOnline := make(map[string]Client)
-	clientsOffline := make(map[string]Client)
+	onlineList := make(map[string]Client)
+	offlineList := make(map[string]Client)
 	for {
 		client := <-Client_q
 		keyString := client.Conn.RemoteAddr().String();
@@ -138,79 +176,42 @@ func server(Client_q chan Client) {
 		case msgConnect:
 			// TODO: implement rate limit for connection requests
 			log.Printf("Got join request from %s\n", keyString);
-			clientsOffline[keyString] = client;
+			offlineList[keyString] = client;
 		case msgQuit:
-			author, ok := clientsOnline[keyString]
+			author, ok := onlineList[keyString]
 			if ok {
 				log.Printf("%s logged out.\n", author.UserName);
 				author.Conn.Close();
-				delete(clientsOnline, keyString);
+				delete(onlineList, keyString);
 			}
 		case msgText:
-			clientOffline, ok := clientsOffline[keyString]
+			clientOffline, ok := offlineList[keyString]
 			if ok {
 				if !canMessage(&clientOffline) {
-					clientsOffline[keyString] = clientOffline // update the timings
+					offlineList[keyString] = clientOffline // update the timings
 					break
 				}
-				switch clientOffline.Stage {
-				case verification:
-					if !verifyToken(strings.TrimRight(client.Text, "\r\n")) {
-						_, err := clientOffline.Conn.Write([]byte("Invalid token.\n"));
-						if err != nil {
-							log.Printf("Could not send invalid token message to client %s\n", clientOffline.Conn.RemoteAddr().String())
-						}
-						clientOffline.LastMsgTime = time.Now()
-						clientsOffline[keyString] = clientOffline
-						break;
-					}
-					_, err := clientOffline.Conn.Write([]byte("Token verified successfully!\nEnter your user name"));
-					if err != nil {
-						log.Printf("Could not send verification message to %s\n", clientOffline.Conn.RemoteAddr().String())
-					}
-					clientOffline.Stage = username
-					clientOffline.LastMsgTime = time.Now()
-					clientsOffline[keyString] = clientOffline
-					break
-				case username:
-					clientOffline.UserName = strings.TrimRight(client.Text, "\r\n");
-					clientOffline.LastMsgTime = time.Now()
-					clientsOffline[keyString] = clientOffline
-					_, err := clientOffline.Conn.Write([]byte("Enter your password:\n"));
-					if err != nil {
-						log.Printf("Could not send passowrd message to %s\n", clientOffline.Conn.RemoteAddr().String())
-					}
-					clientOffline.Stage = password
-					clientsOffline[keyString] = clientOffline
-					break
-				case password:
-					clientOffline.Password = strings.TrimRight(client.Text, "\r\n");
-					clientOffline.LastMsgTime = time.Now()
-					clientsOffline[keyString] = clientOffline
-					_, err := clientOffline.Conn.Write([]byte("Welcome " + clientOffline.UserName + "\n"));
-					if err != nil {
-						log.Printf("Could not send welcome message to %s\n", clientOffline.Conn.RemoteAddr().String())
-					}
-					clientOffline.LastMsgTime = time.Now()
-					clientsOnline[keyString] = clientOffline
-					delete(clientsOffline, keyString)
+				if login(&clientOffline, client.Text) {
+					onlineList[keyString] = clientOffline
+					delete(offlineList, keyString)
 					break
 				}
+				offlineList[keyString] = clientOffline
 				break
 			}
 
-			author, ok := clientsOnline[keyString];
+			author, ok := onlineList[keyString];
 			if !ok {
 				log.Fatal("cannot find client\n");
 			}
 			if !canMessage(&author) {
-				clientsOnline[keyString] = author // update the timings
+				onlineList[keyString] = author // update the timings
 				break;
 			}
 			author.LastMsgTime = time.Now()
 			author.Text = client.Text;
-			clientsOnline[keyString] = author
-			for _, value := range clientsOnline {
+			onlineList[keyString] = author
+			for _, value := range onlineList {
 				// if value.Conn == author.Conn {
 				// 	continue
 				// }
