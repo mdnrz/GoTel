@@ -2,39 +2,39 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"log"
+	"net"
 	"strings"
 
 	"github.com/jroimartin/gocui"
 )
 
 type Command struct {
-	Name string
+	Name        string
 	Description string
-	Signature string
-	Function func(*gocui.View, string) error
+	Signature   string
+	Function    func(*gocui.View, []string) error
 }
 
-const commandCnt = 3
+const commandCnt = 5
+
 var commands [commandCnt]Command
 var gui *gocui.Gui
 var serverConn net.Conn
 
 const serverAddr = "127.0.0.1:6969"
-const initMsg =
-`This is a client for connecting to GoTel chat server.
+const initMsg = `This is a client for connecting to GoTel chat server.
 =======================================================`
 
 func main() {
-	initCommands();
+	initCommands()
 	gui, _ = gocui.NewGui(gocui.OutputNormal)
 	// if err != nil {
 	// 	log.Panicln(err)
 	// }
 	defer gui.Close()
 
-	gui.Cursor = true;
+	gui.Cursor = true
 	gui.SetManagerFunc(layout)
 
 	if err := gui.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
@@ -68,95 +68,173 @@ func layout(g *gocui.Gui) error {
 		if promptErr != gocui.ErrUnknownView {
 			return promptErr
 		}
-		prompt.Editable = true;
-		prompt.Wrap = true;
-		if _,err := g.SetCurrentView("prompt"); err != nil {
-			return err;
+		prompt.Editable = true
+		prompt.Wrap = true
+		if _, err := g.SetCurrentView("prompt"); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func getCommandArg(items []string) string {
-	if len(items) >= 2 {
-		return items[1]
-	}
-	return ""
-}
+// func getCommandArg(items []string) string {
+// 	if len(items) >= 2 {
+// 		return items[1]
+// 	}
+// 	return ""
+// }
 
 func getInput(g *gocui.Gui, v *gocui.View) error {
-	input := strings.TrimRight(v.Buffer(), "\r\n");
+	input := strings.TrimRight(v.Buffer(), "\r\n")
 	items := strings.Split(input, " ")
-	v.Clear();
-	v.SetCursor(0, 0);
-	chatLog, _ := g.View("chatLog");
-	for _, cmd := range commands {
-		if strings.HasPrefix(cmd.Signature, items[0]) {
-			cmd.Function(chatLog, getCommandArg(items));
-			return nil;
+	v.Clear()
+	v.SetCursor(0, 0)
+	chatLog, _ := g.View("chatLog")
+	if strings.HasPrefix(items[0], "/") {
+		for _, cmd := range commands {
+			if strings.HasPrefix(cmd.Signature, items[0]) {
+				cmd.Function(chatLog, items)
+				return nil
+			}
 		}
+		fmt.Fprintf(chatLog, "Invalid command: %s\n", items[0])
+		return nil
 	}
-	// fmt.Fprintf(chatLog, "you entered: %s\n", input);
 	serverConn.Write([]byte(input))
-	return nil;
+	return nil
 }
 
 func initCommands() {
-	commands = [commandCnt]Command {
+	commands = [commandCnt]Command{
 
-		Command {
-			Name: "help",
+		Command{
+			Name:        "help",
 			Description: "Print help menu",
-			Signature: "/help",
-			Function: printHelp,
+			Signature:   "/help [command]",
+			Function:    printHelp,
 		},
 
-		Command {
-			Name: "join",
+		Command{
+			Name:        "join",
 			Description: "Join the chat",
-			Signature: "/join <Token>",
-			Function: sendJoin,
+			Signature:   "/join <ipv4>:<port> <TOKEN>",
+			Function:    sendJoin,
 		},
 
-		Command {
-			Name: "quit",
+		Command{
+			Name:        "signup",
+			Description: "Sign up to server",
+			Signature:   "/signup <username> <password>",
+			Function:    sendSignup,
+		},
+
+		Command{
+			Name:        "login",
+			Description: "Login to server",
+			Signature:   "/login <username> <password>",
+			Function:    sendLogin,
+		},
+
+		Command{
+			Name:        "exit",
 			Description: "Logout from server",
-			Signature: "/quit",
-			Function: sendQuit,
+			Signature:   "/exit",
+			Function:    sendQuit,
 		},
 	}
 }
 
-func printHelp(v *gocui.View, input string) error {
-	for _, cmd := range commands {
-		fmt.Fprintf(v, "%s - %s\n", cmd.Signature, cmd.Description)
+func printHelp(v *gocui.View, input []string) error {
+	if len(input) == 1 {
+		fmt.Fprintf(v, "Commands:\n")
+		for _, cmd := range commands {
+			fmt.Fprintf(v, "%s - %s\n", cmd.Signature, cmd.Description)
+		}
+		return nil
 	}
+	if len(input) == 2 {
+		for _, cmd := range commands {
+			if strings.HasPrefix(cmd.Signature, input[1]) {
+				fmt.Fprintf(v, "%s - %s\n", cmd.Signature, cmd.Description)
+				return nil
+			}
+		}
+		fmt.Fprintf(v, "%s is not a valid command. Type /help to see the full list of commands.\n", input[1])
+		return nil
+	}
+	fmt.Fprintln(v, "Too many arguments for /help command.")
+	fmt.Fprintf(v, "%s - %s\n", commands[0].Signature, commands[0].Description)
 	return nil
 }
 
-func sendJoin(v *gocui.View, input string) error {
-	serverConn, _ = net.Dial("tcp", serverAddr);
-	// if err != nil {
-	// 	return err
-	// }
-	_, err := serverConn.Write([]byte(input));
+func sendJoin(v *gocui.View, input []string) error {
+	var err error
+	if len(input) != 3 {
+		fmt.Fprintf(v, "Invalid join command.\n")
+		input := []string{"/help", "/join"}
+		printHelp(v, input)
+		return nil
+	}
+
+	if len(input[2]) != 32 {
+		fmt.Fprintf(v, "Invalid token: %s\nThe token should be a 32-character string.\n", input[1])
+		return nil
+	}
+
+	serverConn, err = net.Dial("tcp", input[1])
 	if err != nil {
-		return err
+		fmt.Fprintf(v, "Server is not responding.\n")
+		return nil
+	}
+	_, err = serverConn.Write([]byte(input[0] + " " + input[2]))
+	if err != nil {
+		fmt.Fprintf(v, "Could not send join request to the server: %s\n", err)
+		return nil
 	}
 	go getMsg(serverConn)
 	return nil
 }
 
-func sendQuit (v *gocui.View, input string) error {
-	fmt.Fprintln(v, "Quiting from server");
+func sendSignup(v *gocui.View, input []string) error {
+	if len(input) != 3 {
+		fmt.Fprintf(v, "Invalid signup command.\n")
+		input := []string{"/help", "/signup"}
+		printHelp(v, input)
+		return nil
+	}
+
+	_, err := serverConn.Write([]byte(input[0] + " " + input[1] + " " + input[2]))
+	if err != nil {
+		fmt.Fprintf(v, "Could not send signup request to the server: %s\n", err)
+	}
+	return nil
+}
+
+func sendLogin(v *gocui.View, input []string) error {
+	if len(input) != 3 {
+		fmt.Fprintf(v, "Invalid login command.\n")
+		input := []string{"/help", "/login"}
+		printHelp(v, input)
+		return nil
+	}
+
+	_, err := serverConn.Write([]byte(input[0] + " " + input[1] + " " + input[2]))
+	if err != nil {
+		fmt.Fprintf(v, "Could not send login request to the server: %s\n", err)
+	}
+	return nil
+}
+
+func sendQuit(v *gocui.View, input []string) error {
+	fmt.Fprintln(v, "Quiting from server")
 	serverConn.Close()
 	return nil
 }
 
-func getMsg (conn net.Conn) {
+func getMsg(conn net.Conn) {
 	readBuf := make([]byte, 512)
 	for {
-		n, readErr := conn.Read(readBuf);
+		n, readErr := conn.Read(readBuf)
 
 		if readErr != nil {
 			return
@@ -171,7 +249,6 @@ func getMsg (conn net.Conn) {
 		})
 	}
 }
-
 
 func quit(g *gocui.Gui, v *gocui.View) error {
 	return gocui.ErrQuit
