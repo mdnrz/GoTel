@@ -46,6 +46,7 @@ type Client struct {
 	Stage       loginStage
 	UserName    string
 	LastMsgTime time.Time
+	PassRetry   int
 	Strike      int
 	Banned      bool
 	BanEnd      time.Time
@@ -247,13 +248,17 @@ func server(Msg_q chan Msg) {
 
 		case msgSignup:
 			_, offline := offlineList[keyString]
-			_, joined := joinedList[keyString]
+			client, joined := joinedList[keyString]
 			_, online := onlineList[keyString]
 			if online {
 				msg.Author.Conn.Write([]byte("This username already exists."))
 				break
 			}
 			if joined {
+				if !canMessage(&client) {
+					joinedList[keyString] = client // update the timings
+					break
+				}
 				yes, err := isUserInDB(msg.Args[0])
 				if err != nil {
 					msg.Author.Conn.Write([]byte("Database error: " + err.Error()))
@@ -280,8 +285,9 @@ func server(Msg_q chan Msg) {
 			}
 		case msgLogin:
 			_, offline := offlineList[keyString]
-			_, joined := joinedList[keyString]
+			client, joined := joinedList[keyString]
 			_, online := onlineList[keyString]
+
 			if online {
 				msg.Author.Conn.Write([]byte("You are currently logged in."))
 				break
@@ -291,6 +297,10 @@ func server(Msg_q chan Msg) {
 				break
 			}
 			if joined {
+				if !canMessage(&client) {
+					joinedList[keyString] = client // update the timings
+					break
+				}
 				yes, err := isUserInDB(msg.Args[0])
 				if err != nil {
 					msg.Author.Conn.Write([]byte("Database error: " + err.Error()))
@@ -306,8 +316,16 @@ func server(Msg_q chan Msg) {
 					break
 				}
 				if err = bcrypt.CompareHashAndPassword([]byte(passHash), []byte(msg.Args[1])); err != nil {
-					// TODO: limited retry
-					msg.Author.Conn.Write([]byte("Incorrect password."))
+					client.PassRetry += 1
+					joinedList[keyString] = client
+					if client.PassRetry >= 3 {
+						client.Banned = true
+						client.BanEnd = time.Now().Add(banTimeoutSec * time.Second)
+						msg.Author.Conn.Write([]byte("Reached the limit of retries. Youre banned for 180 seconds."))
+						joinedList[keyString] = client
+						break
+					}
+					msg.Author.Conn.Write([]byte("Incorrect password. You have " + fmt.Sprintf("%d", 3-client.PassRetry) + " chances before getting banned for 3 minuetes."))
 					break
 				}
 				msg.Author.UserName = msg.Args[0]
@@ -395,13 +413,6 @@ func main() {
 			continue
 		}
 		log.Printf("Accepted connection from %s", conn.RemoteAddr())
-		// Msg_q <- Msg{
-		// 	Type:         msgConnect,
-		// 	Author: Client{
-		// 		Conn:  conn,
-		// 		Stage: verification,
-		// 	},
-		// }
 		go clientRoutine(conn, Msg_q)
 	}
 }

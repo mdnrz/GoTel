@@ -76,13 +76,6 @@ func layout(g *gocui.Gui) error {
 	return nil
 }
 
-// func getCommandArg(items []string) string {
-// 	if len(items) >= 2 {
-// 		return items[1]
-// 	}
-// 	return ""
-// }
-
 func getInput(g *gocui.Gui, v *gocui.View) error {
 	input := strings.TrimRight(v.Buffer(), "\r\n")
 	items := strings.Split(input, " ")
