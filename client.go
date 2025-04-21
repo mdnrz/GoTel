@@ -2,11 +2,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/jroimartin/gocui"
 	"log"
 	"net"
 	"strings"
-
-	"github.com/jroimartin/gocui"
 )
 
 type Command struct {
@@ -205,7 +204,7 @@ func sendSignup(v *gocui.View, input []string) error {
 
 	_, err := serverConn.Write([]byte(input[0] + " " + input[1] + " " + input[2]))
 	if err != nil {
-		fmt.Fprintf(v, "Could not send signup request to the server: %s\n", err)
+		fmt.Fprintf(v, "Could not send signup request to the server: %s\nTry join command first.", err)
 	}
 	return nil
 }
@@ -220,7 +219,7 @@ func sendLogin(v *gocui.View, input []string) error {
 
 	_, err := serverConn.Write([]byte(input[0] + " " + input[1] + " " + input[2]))
 	if err != nil {
-		fmt.Fprintf(v, "Could not send login request to the server: %s\n", err)
+		fmt.Fprintf(v, "Could not send login request to the server: %s\nTry /join command first.", err)
 	}
 	return nil
 }

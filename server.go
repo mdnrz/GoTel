@@ -2,15 +2,16 @@ package main
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"fmt"
+	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/crypto/bcrypt"
 	"log"
 	"math/big"
 	"net"
 	"os"
 	"strings"
 	"time"
-	"database/sql"
-	_"github.com/mattn/go-sqlite3"
 )
 
 type msgType int
@@ -44,7 +45,6 @@ const (
 type Client struct {
 	Stage       loginStage
 	UserName    string
-	Password    string
 	LastMsgTime time.Time
 	Strike      int
 	Banned      bool
@@ -68,7 +68,7 @@ func initReqMap() {
 
 func clientRoutine(conn net.Conn, Msg_q chan Msg) {
 	Msg_q <- Msg{
-		Type:         msgConnect,
+		Type: msgConnect,
 		Author: Client{
 			Conn:  conn,
 			Stage: verification,
@@ -174,45 +174,7 @@ func trimNewline(input rune) bool {
 	return false
 }
 
-func login(client *Client, msg string) bool {
-	if client.Stage == verification {
-		if !verifyToken(strings.TrimRightFunc(msg, trimNewline)) {
-			_, err := client.Conn.Write([]byte("Invalid token.\n"))
-			if err != nil {
-				log.Printf("Could not send invalid token message to client %s\n", client.Conn.RemoteAddr().String())
-			}
-			client.LastMsgTime = time.Now()
-			return false
-		}
-		_, err := client.Conn.Write([]byte("Token verified successfully!\nEnter your user name"))
-		if err != nil {
-			log.Printf("Could not send verification message to %s\n", client.Conn.RemoteAddr().String())
-		}
-		client.Stage = username
-		client.LastMsgTime = time.Now()
-		return false
-	}
-	if client.Stage == username {
-		client.UserName = strings.TrimRight(msg, "\r\n")
-		client.LastMsgTime = time.Now()
-		_, err := client.Conn.Write([]byte("Enter your password:\n"))
-		if err != nil {
-			log.Printf("Could not send passowrd message to %s\n", client.Conn.RemoteAddr().String())
-		}
-		client.Stage = password
-		return false
-	}
-	client.Password = strings.TrimRight(msg, "\r\n")
-	client.LastMsgTime = time.Now()
-	_, err := client.Conn.Write([]byte("Welcome " + client.UserName + "\n"))
-	if err != nil {
-		log.Printf("Could not send welcome message to %s\n", client.Conn.RemoteAddr().String())
-	}
-	client.LastMsgTime = time.Now()
-	return true
-}
-
-func isUserInDB (username string) (bool, error) {
+func isUserInDB(username string) (bool, error) {
 	var count int
 	check := "SELECT COUNT(*) FROM users WHERE username = ?"
 	err := userDB.QueryRow(check, username).Scan(&count)
@@ -222,20 +184,21 @@ func isUserInDB (username string) (bool, error) {
 	return count > 0, nil
 }
 
-func addUserToDB (client Client) error {
+func addUserToDB(client Client, rawPass string) error {
 	insert := "INSERT INTO users (username, password, banned, banEnd) VALUES ($1, $2, $3, $4)"
-	_, err := userDB.Exec(insert, client.UserName, client.Password, client.Banned, client.BanEnd)
+	passHashed, err := bcrypt.GenerateFromPassword([]byte(rawPass), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = userDB.Exec(insert, client.UserName, passHashed, client.Banned, client.BanEnd)
 	return err
 }
 
-func checkPassword(username string, inputPass string) (bool, error) {
-	var dbPass string
+func getPassHash(username string) (string, error) {
+	var passHash string
 	query := "SELECT password FROM users WHERE username = ?"
-	err := userDB.QueryRow(query, username).Scan(&dbPass)
-	if err != nil {
-		return false, nil
-	}
-	return dbPass == inputPass, nil
+	err := userDB.QueryRow(query, username).Scan(&passHash)
+	return passHash, err
 }
 
 func server(Msg_q chan Msg) {
@@ -271,7 +234,7 @@ func server(Msg_q chan Msg) {
 					delete(offlineList, keyString)
 					msg.Author.Conn.Write([]byte("Authentication successfull."))
 					break
-				} 
+				}
 				msg.Author.Conn.Write([]byte("Provided token is not valid."))
 				break
 			}
@@ -291,7 +254,7 @@ func server(Msg_q chan Msg) {
 				break
 			}
 			if joined {
-				yes, err := isUserInDB(msg.Args[0]) 
+				yes, err := isUserInDB(msg.Args[0])
 				if err != nil {
 					msg.Author.Conn.Write([]byte("Database error: " + err.Error()))
 					break
@@ -301,9 +264,8 @@ func server(Msg_q chan Msg) {
 					break
 				}
 				msg.Author.UserName = msg.Args[0]
-				msg.Author.Password = msg.Args[1]
 				msg.Author.LastMsgTime = time.Now()
-				if err := addUserToDB(msg.Author); err != nil {
+				if err := addUserToDB(msg.Author, msg.Args[1]); err != nil {
 					msg.Author.Conn.Write([]byte("Could not signup user. Database error: " + err.Error()))
 					break
 				}
@@ -329,7 +291,7 @@ func server(Msg_q chan Msg) {
 				break
 			}
 			if joined {
-				yes, err := isUserInDB(msg.Args[0]) 
+				yes, err := isUserInDB(msg.Args[0])
 				if err != nil {
 					msg.Author.Conn.Write([]byte("Database error: " + err.Error()))
 					break
@@ -338,18 +300,17 @@ func server(Msg_q chan Msg) {
 					msg.Author.Conn.Write([]byte("Username does not exist. You can create new user using /signup command."))
 					break
 				}
-				passOK, err := checkPassword(msg.Args[0], msg.Args[1])
+				passHash, err := getPassHash(msg.Args[0])
 				if err != nil {
 					msg.Author.Conn.Write([]byte("Database error: " + err.Error()))
 					break
 				}
-				if !passOK {
+				if err = bcrypt.CompareHashAndPassword([]byte(passHash), []byte(msg.Args[1])); err != nil {
 					// TODO: limited retry
 					msg.Author.Conn.Write([]byte("Incorrect password."))
 					break
 				}
 				msg.Author.UserName = msg.Args[0]
-				msg.Author.Password = msg.Args[1]
 				msg.Author.LastMsgTime = time.Now()
 				onlineList[keyString] = msg.Author
 				delete(joinedList, keyString)
