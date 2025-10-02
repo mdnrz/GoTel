@@ -34,6 +34,7 @@ func main() {
 	defer gui.Close()
 
 	gui.Cursor = true
+	gui.Mouse = true
 	gui.SetManagerFunc(layout)
 
 	if err := gui.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
@@ -61,6 +62,8 @@ func layout(g *gocui.Gui) error {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
+		chatLog.Wrap = true
+		chatLog.Autoscroll = true
 		fmt.Fprintln(chatLog, initMsg)
 	}
 	if prompt, promptErr := g.SetView("prompt", promptX1, promptY1, promptX2, promptY2); promptErr != nil {
@@ -92,7 +95,9 @@ func getInput(g *gocui.Gui, v *gocui.View) error {
 		fmt.Fprintf(chatLog, "Invalid command: %s\n", items[0])
 		return nil
 	}
-	serverConn.Write([]byte(input))
+	if serverConn != nil {
+		serverConn.Write([]byte(input))
+	}
 	return nil
 }
 
