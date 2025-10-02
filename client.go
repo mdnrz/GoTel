@@ -223,7 +223,7 @@ func sendLogin(v *gocui.View, input []string) error {
 }
 
 func sendQuit(v *gocui.View, input []string) error {
-	fmt.Fprintln(v, "Quiting from server")
+	// fmt.Fprintln(v, "Quiting from server")
 	serverConn.Close()
 	return nil
 }
@@ -248,5 +248,6 @@ func getMsg(conn net.Conn) {
 }
 
 func quit(g *gocui.Gui, v *gocui.View) error {
+	sendQuit(nil, nil )
 	return gocui.ErrQuit
 }
